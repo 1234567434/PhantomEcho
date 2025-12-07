@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PhantomEcho</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { height:100vh; background:#0b0d17; overflow:hidden; font-family:Segoe UI; color:#fff; }
+  .aurora { position:absolute; inset:0; opacity:0.7;
+    background: radial-gradient(circle at 20% 80%, #00ff9d22 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, #ff00b844 0%, transparent 50%);
+    animation: breathe 18s infinite alternate; }
+  @keyframes breathe { 0% { opacity:0.6; } 100% { opacity:0.9; } }
+  .chat { position:absolute; bottom:30px; left:50%; transform:translateX(-50%); width:90%; max-width:800px; height:80vh; display:flex; flex-direction:column; }
+  .messages { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
+  .msg { max-width:70%; padding:12px 20px; border-radius:20px; backdrop-filter:blur(10px); animation:appear .5s; }
+  .msg.me { align-self:flex-end; background:rgba(139,0,255,0.25); border:1px solid rgba(139,0,255,0.4); }
+  .msg.other { align-self:flex-start; background:rgba(0,212,255,0.2); border:1px solid rgba(0,212,255,0.4); }
+  @keyframes appear { from { opacity:0; transform:translateY(20px); } }
+  .input { display:flex; gap:12px; padding:0 10px; }
+  input { flex:1; padding:16px 20px; background:rgba(255,255,255,0.05); border:1px solid rgba(0,212,255,0.4); border-radius:30px; color:#fff; font-size:16px; outline:none; }
+  input:focus { border-color:#00d4ff; box-shadow:0 0 20px rgba(0,212,255,0.4); }
+  button { width:56px; height:56px; background:linear-gradient(45deg,#00d4ff,#8b00ff); border:none; border-radius:50%; color:white; font-size:24px; cursor:pointer; }
+  button:hover { transform:scale(1.1); box-shadow:0 0 30px rgba(0,212,255,0.6); }
+  .room { position:absolute; top:20px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.5); padding:10px 20px; border-radius:20px; backdrop-filter:blur(10px); }
+</style>
+</head>
+<body>
+  <div class="aurora"></div>
+  <div class="room" id="roomInfo">Создаём комнату...</div>
+  <div class="chat">
+    <div class="messages" id="messages"></div>
+    <div class="input">
+      <input type="text" id="msg" placeholder="Echo your thoughts..." autocomplete="off">
+      <button id="send">Send</button>
+    </div>
+  </div>
+
+<script>
+// ==== PhantomEcho v0.0.2 — без сервера, чистый WebRTC ====
+const messages = document.getElementById('messages');
+const input = document.getElementById('msg');
+const roomInfo = document.getElementById('roomInfo');
+
+let peer, roomId;
+
+// Генерируем или берём ID комнаты из URL
+roomId = location.hash.slice(1) || Math.random().toString(36).slice(2,10);
+location.hash = roomId;
+roomInfo.textContent = `Комната: ${roomId} — кинь ссылку другу`;
+
+const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+peer = new RTCPeerConnection(config);
+
+const channel = peer.createDataChannel('chat');
+channel.onopen = () => roomInfo.textContent = `Подключено! Комната: ${roomId}`;
+channel.onmessage = e => addMessage(e.data, false);
+
+peer.onicecandidate = e => e.candidate && sendSignal({ candidate: e.candidate });
+peer.ondatachannel = e => e.channel.onmessage = m => addMessage(m.data, false);
+
+async function start() {
+  if (location.hash === '#' + roomId) { // ты создатель комнаты
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    sendSignal({ sdp: peer.localDescription });
+  } else { // ты по ссылке пришёл
+    const response = await fetch(`https://tinyurl.com/api-create.php?url=${location.href}`);
+    // просто ждём, пока создатель пришлёт offer через любой мессенджер
+    alert('Скинь эту ссылку создателю комнаты, пусть он тебе пришлёт код');
+  }
+}
+
+// Простейший сигналинг через любой мессенджер (копипаст)
+function sendSignal(data) {
+  const json = JSON.stringify(data);
+  prompt('Скопируй это и отправь второму человеку:', json);
+  navigator.clipboard.writeText(json);
+}
+
+// Принимаем сигналинг от второго человека
+navigator.clipboard.readText().then(text => {
+  try {
+    const sig = JSON.parse(text);
+    if (sig.sdp) peer.setRemoteDescription(sig.sdp).then(() => {
+      if (sig.sdp.type === 'offer') peer.createAnswer().then(a => peer.setLocalDescription(a).then(() => sendSignal({sdp: a})));
+    });
+    if (sig.candidate) peer.addIceCandidate(sig.candidate);
+  } catch(e) {}
+});
+
+function addMessage(text, me = true) {
+  const div = document.createElement('div');
+  div.className = `msg ${me?'me':'other'}`;
+  div.textContent = text;
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+document.getElementById('send').onclick = () => {
+  const text = input.value.trim();
+  if (text && channel.readyState === 'open') {
+    channel.send(text);
+    addMessage(text, true);
+    input.value = '';
+  }
+};
+
+input.addEventListener('keypress', e => e.key==='Enter' && document.getElementById('send').click());
+
+addMessage('PhantomEcho запущен. Ждём второго человека...');
+</script>
+</body>
+</html>
